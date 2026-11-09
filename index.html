@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>무한의 계단</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: #111;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #fff;
+    overflow: hidden;
+    touch-action: none;
+  }
+  h1 {
+    font-size: 1.4rem;
+    color: #ffd700;
+    margin-bottom: 6px;
+    text-shadow: 0 0 10px rgba(255,215,0,0.5);
+  }
+  #scoreBoard {
+    font-size: 1.1rem;
+    margin-bottom: 8px;
+    background: rgba(0,0,0,0.5);
+    padding: 6px 18px;
+    border-radius: 20px;
+  }
+  canvas {
+    border: 3px solid #ffd700;
+    border-radius: 8px;
+    background: #1a1a2e;
+    max-width: 96vw;
+    box-shadow: 0 0 30px rgba(255,215,0,0.25);
+  }
+  #controls {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: #aaa;
+    text-align: center;
+  }
+  #overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.88);
+    padding: 28px 40px;
+    border-radius: 16px;
+    text-align: center;
+    border: 2px solid #ffd700;
+    display: none;
+    z-index: 20;
+  }
+  #overlay h2 { color: #ffd700; margin-bottom: 12px; font-size: 1.6rem; }
+  #overlay p { margin-bottom: 16px; color: #ccc; }
+  #overlay button {
+    background: linear-gradient(180deg, #ffd700, #e6b800);
+    border: none;
+    padding: 12px 32px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    border-radius: 10px;
+    cursor: pointer;
+    color: #222;
+  }
+</style>
+</head>
+<body>
+  <h1>🪜 무한의 계단</h1>
+  <div id="scoreBoard">점수: 0 &nbsp;|&nbsp; 최고: 0</div>
+  <canvas id="game" width="400" height="600"></canvas>
+  <div id="controls">← → 또는 A D / 화면 터치로 좌우 이동<br>계단을 밟으며 계속 올라가!</div>
+  <div id="overlay">
+    <h2>게임 오버</h2>
+    <p id="finalScore">점수: 0</p>
+    <button onclick="restart()">다시 시작</button>
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('scoreBoard');
+const overlay = document.getElementById('overlay');
+const finalScoreEl = document.getElementById('finalScore');
+
+const W = canvas.width;
+const H = canvas.height;
+
+let score = 0;
+let highScore = parseInt(localStorage.getItem('infinite_stairs_high') || '0');
+let gameOver = false;
+let frame = 0;
+
+const player = {
+  x: W / 2,
+  y: H - 120,
+  w: 28,
+  h: 40,
+  side: 1,
+  vy: 0,
+  onStair: true,
+  anim: 0
+};
+
+const STAIR_W = 90;
+const STAIR_H = 18;
+const STAIR_GAP = 52;
+let stairs = [];
+let cameraY = 0;
+let speed = 1.8;
+
+let leftPressed = false;
+let rightPressed = false;
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') leftPressed = true;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') rightPressed = true;
+  if (e.code === 'Space' || e.code === 'KeyR') if (gameOver) restart();
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') leftPressed = false;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') rightPressed = false;
+});
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+  if (touchX < canvas.clientWidth / 2) {
+    leftPressed = true;
+    rightPressed = false;
+  } else {
+    rightPressed = true;
+    leftPressed = false;
+  }
+});
+canvas.addEventListener('touchend', e => {
+  leftPressed = false;
+  rightPressed = false;
+});
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  if (mx < rect.width / 2) leftPressed = true;
+  else rightPressed = true;
+});
+canvas.addEventListener('mouseup', () => {
+  leftPressed = false;
+  rightPressed = false;
+});
+
+function initStairs() {
+  stairs = [];
+  for (let i = 0; i < 18; i++) {
+    const side = (i % 2 === 0) ? 1 : -1;
+    stairs.push({
+      y: H - 80 - i * STAIR_GAP,
+      side: side,
+      x: side === 1 ? W/2 + 20 : W/2 - STAIR_W - 20
+    });
+  }
+}
+
+function addStair() {
+  const last = stairs[stairs.length - 1];
+  const nextSide = -last.side;
+  stairs.push({
+    y: last.y - STAIR_GAP,
+    side: nextSide,
+    x: nextSide === 1 ? W/2 + 20 : W/2 - STAIR_W - 20
+  });
+}
+
+function restart() {
+  score = 0;
+  gameOver = false;
+  cameraY = 0;
+  speed = 1.8;
+  player.x = W / 2;
+  player.y = H - 120;
+  player.side = 1;
+  player.vy = 0;
+  player.onStair = true;
+  overlay.style.display = 'none';
+  initStairs();
+  updateScore();
+}
+
+function updateScore() {
+  scoreEl.textContent = `점수: ${score}  |  최고: ${highScore}`;
+}
+
+function update() {
+  if (gameOver) return;
+  frame++;
+  speed = 1.8 + score * 0.012;
+
+  for (const s of stairs) {
+    s.y += speed;
+  }
+  while (stairs.length && stairs[0].y > H + 40) {
+    stairs.shift();
+    score++;
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('infinite_stairs_high', highScore);
+    }
+    updateScore();
+    addStair();
+  }
+
+  if (leftPressed && player.side === 1) {
+    player.side = -1;
+    player.x = W/2 - 40;
+    player.anim = 8;
+  }
+  if (rightPressed && player.side === -1) {
+    player.side = 1;
+    player.x = W/2 + 12;
+    player.anim = 8;
+  }
+  if (player.anim > 0) player.anim--;
+
+  if (!player.onStair) {
+    player.vy += 0.55;
+    player.y += player.vy;
+  }
+
+  player.onStair = false;
+  for (const s of stairs) {
+    if (player.side === s.side &&
+        player.y + player.h >= s.y &&
+        player.y + player.h <= s.y + STAIR_H + 8 &&
+        player.vy >= 0) {
+      player.y = s.y - player.h;
+      player.vy = 0;
+      player.onStair = true;
+      break;
+    }
+  }
+
+  if (player.onStair) {
+    player.y -= speed * 0.15;
+  }
+
+  if (player.y > H + 30) {
+    gameOver = true;
+    finalScoreEl.textContent = `점수: ${score}`;
+    overlay.style.display = 'block';
+  }
+}
+
+function drawBackground() {
+  const grd = ctx.createLinearGradient(0, 0, 0, H);
+  grd.addColorStop(0, '#0f0c29');
+  grd.addColorStop(0.5, '#302b63');
+  grd.addColorStop(1, '#24243e');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  for (let i = 0; i < 40; i++) {
+    const sx = (i * 97) % W;
+    const sy = (i * 53 + frame * 0.3) % H;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1.2, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawStairs() {
+  for (const s of stairs) {
+    ctx.fillStyle = '#8d6e63';
+    ctx.fillRect(s.x, s.y, STAIR_W, STAIR_H);
+    ctx.fillStyle = '#a1887f';
+    ctx.fillRect(s.x, s.y, STAIR_W, 5);
+    ctx.fillStyle = '#5d4037';
+    ctx.fillRect(s.x, s.y + STAIR_H - 4, STAIR_W, 4);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(s.x + 4, s.y + 2, STAIR_W - 8, 3);
+  }
+}
+
+function drawPlayer() {
+  const px = player.x;
+  const py = player.y;
+  const bounce = player.onStair ? Math.sin(frame * 0.2) * 1.5 : 0;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(px + player.w/2, py + player.h + 3, 12, 4, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#42a5f5';
+  ctx.fillRect(px + 6, py + 14 + bounce, 16, 18);
+  ctx.fillStyle = '#ffccbc';
+  ctx.beginPath();
+  ctx.arc(px + 14, py + 10 + bounce, 10, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#5d4037';
+  ctx.fillRect(px + 5, py + 2 + bounce, 18, 8);
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.arc(px + 11, py + 10 + bounce, 2, 0, Math.PI*2);
+  ctx.arc(px + 17, py + 10 + bounce, 2, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#1565c0';
+  const legSwing = player.onStair ? Math.sin(frame * 0.25) * 3 : 0;
+  ctx.fillRect(px + 7, py + 30 + bounce, 6, 11 + legSwing);
+  ctx.fillRect(px + 15, py + 30 + bounce, 6, 11 - legSwing);
+  ctx.fillStyle = '#ffccbc';
+  ctx.fillRect(px + 2, py + 16 + bounce, 5, 12);
+  ctx.fillRect(px + 21, py + 16 + bounce, 5, 12);
+}
+
+function render() {
+  drawBackground();
+  drawStairs();
+  drawPlayer();
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '12px sans-serif';
+  ctx.fillText(`속도 ${(speed).toFixed(1)}`, 10, 20);
+}
+
+function loop() {
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+
+initStairs();
+updateScore();
+loop();
+</script>
+</body>
+</html>
